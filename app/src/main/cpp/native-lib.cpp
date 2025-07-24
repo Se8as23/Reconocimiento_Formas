@@ -1,11 +1,9 @@
 #include <jni.h>
 #include <string>
 #include <android/log.h>
-
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
 #include "android/bitmap.h"
-
 #include <opencv2/opencv.hpp>
 #include <cmath>
 #include <vector>
@@ -17,47 +15,36 @@ using namespace cv;
 using namespace std;
 namespace fs = filesystem;
 
-struct HuMomentsData {
-    std::vector<double> hu_moments;
+struct MomentData {
+    std::vector<double> huMoments;
     int label;
 };
 
-
-
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_logic_reconocimientodeformas_MainActivity_stringFromJNI(
-        JNIEnv* env,
-        jobject /* this */) {
-    std::string hello = "Hello from C++";
-    return env->NewStringUTF(hello.c_str());
+Java_com_example_imageclassification_MainActivity_getGreetingMessage(JNIEnv* env, jobject) {
+    return env->NewStringUTF("Hello from C++");
 }
 
-
-void bitmapToMat(JNIEnv * env, jobject bitmap, cv::Mat &dst, jboolean needUnPremultiplyAlpha) {
+void convertBitmapToMat(JNIEnv * env, jobject bitmap, cv::Mat &output, bool preMultiplyAlpha) {
     AndroidBitmapInfo info;
-    void* pixels = 0;
+    void* pixels = nullptr;
     try {
-        // Verificar información del bitmap
         CV_Assert(AndroidBitmap_getInfo(env, bitmap, &info) >= 0);
         CV_Assert(info.format == ANDROID_BITMAP_FORMAT_RGBA_8888 || info.format == ANDROID_BITMAP_FORMAT_RGB_565);
-
-        // Bloquear píxeles
         CV_Assert(AndroidBitmap_lockPixels(env, bitmap, &pixels) >= 0);
         CV_Assert(pixels);
 
-        dst.create(info.height, info.width, CV_8UC4); // Crear matriz de destino
+        output.create(info.height, info.width, CV_8UC4);
 
-        // Procesar según formato
         if (info.format == ANDROID_BITMAP_FORMAT_RGBA_8888) {
-            cv::Mat tmp(info.height, info.width, CV_8UC4, pixels);
-            if (needUnPremultiplyAlpha) cvtColor(tmp, dst, cv::COLOR_mRGBA2RGBA);
-            else tmp.copyTo(dst);
-        } else { // RGB_565
-            cv::Mat tmp(info.height, info.width, CV_8UC2, pixels);
-            cvtColor(tmp, dst, cv::COLOR_BGR5652RGBA);
+            cv::Mat temp(info.height, info.width, CV_8UC4, pixels);
+            if (preMultiplyAlpha) cvtColor(temp, output, cv::COLOR_mRGBA2RGBA);
+            else temp.copyTo(output);
+        } else {
+            cv::Mat temp(info.height, info.width, CV_8UC2, pixels);
+            cvtColor(temp, output, cv::COLOR_BGR5652RGBA);
         }
 
-        // Liberar los píxeles
         AndroidBitmap_unlockPixels(env, bitmap);
     } catch (const cv::Exception& e) {
         AndroidBitmap_unlockPixels(env, bitmap);
@@ -66,119 +53,100 @@ void bitmapToMat(JNIEnv * env, jobject bitmap, cv::Mat &dst, jboolean needUnPrem
     } catch (...) {
         AndroidBitmap_unlockPixels(env, bitmap);
         jclass je = env->FindClass("java/lang/Exception");
-        env->ThrowNew(je, "Unknown exception in JNI code {nBitmapToMat}");
+        env->ThrowNew(je, "Unknown error during bitmap to mat conversion");
     }
 }
 
-std::vector<double> calculate_hu_moments(const cv::Mat& image) {
-    // Convertir la imagen a escala de grises
-    cv::Mat gray_image;
-    cv::cvtColor(image, gray_image, cv::COLOR_BGR2GRAY);
+std::vector<double> computeHuMoments(const cv::Mat& img) {
+    cv::Mat grayImg;
+    cv::cvtColor(img, grayImg, cv::COLOR_BGR2GRAY);
 
-    // Calcular los momentos de la imagen
-    cv::Moments moments = cv::moments(gray_image);
+    cv::Moments imgMoments = cv::moments(grayImg);
+    std::vector<double> hu(7);
+    cv::HuMoments(imgMoments, hu);
 
-    // Calcular los momentos invariantes de Hu
-    std::vector<double> hu_moments(7);
-    cv::HuMoments(moments, hu_moments);
-
-    return hu_moments;
+    return hu;
 }
 
-// Función para calcular la distancia Euclidiana
-double euclidean_distance(const std::vector<double>& a, const std::vector<double>& b) {
-    double sum = 0.0;
+double calcEuclideanDist(const std::vector<double>& a, const std::vector<double>& b) {
+    double dist = 0.0;
     for (size_t i = 0; i < a.size(); ++i) {
-        sum += std::pow(a[i] - b[i], 2);
+        dist += std::pow(a[i] - b[i], 2);
     }
-    return std::sqrt(sum);
+    return std::sqrt(dist);
 }
 
-std::vector<HuMomentsData> read_hu_moments_from_csv(const std::string& filename) {
-    std::vector<HuMomentsData> hu_data;
-    std::ifstream file(filename);
+std::vector<MomentData> loadHuMomentsFromCSV(const std::string& filePath) {
+    std::vector<MomentData> momentsData;
+    std::ifstream file(filePath);
     std::string line;
 
-    // Leer cada línea del archivo CSV
     while (std::getline(file, line)) {
         std::stringstream ss(line);
         std::string token;
 
-        HuMomentsData data;
-        bool valid_line = true;
+        MomentData data;
+        bool validLine = true;
 
-        // Leer los momentos de Hu (7 valores)
         for (int i = 0; i < 7; ++i) {
             std::getline(ss, token, ',');
             try {
-                data.hu_moments.push_back(std::stod(token));  // Convierte el token a un double
-            } catch (const std::invalid_argument& e) {
-                std::cerr << "Error al convertir el valor de momento: " << token << std::endl;
-                valid_line = false;  // Marca la línea como inválida
+                data.huMoments.push_back(std::stod(token));
+            } catch (const std::invalid_argument&) {
+                validLine = false;
                 break;
             }
         }
 
-        // Leer la etiqueta
-        if (valid_line) {
+        if (validLine) {
             std::getline(ss, token, ',');
             try {
-                data.label = std::stoi(token);  // Convierte el token a un int
-                hu_data.push_back(data);
-            } catch (const std::invalid_argument& e) {
-                std::cerr << "Error al convertir la etiqueta: " << token << std::endl;
+                data.label = std::stoi(token);
+                momentsData.push_back(data);
+            } catch (const std::invalid_argument&) {
+                // Invalid label handling
             }
         }
     }
 
-    return hu_data;
+    return momentsData;
 }
 
-// Clasificar la nueva imagen basándonos en los momentos de Hu
-int classify_image(const cv::Mat& new_image, const std::vector<HuMomentsData>& dataset) {
-    // Calcular los momentos de Hu para la nueva imagen
-    std::vector<double> new_hu_moments = calculate_hu_moments(new_image);
+int identifyImage(const cv::Mat& newImg, const std::vector<MomentData>& dataset) {
+    std::vector<double> newImageMoments = computeHuMoments(newImg);
+    double minDist = std::numeric_limits<double>::max();
+    int label = -1;
 
-    // Inicializar la distancia mínima y la etiqueta predicha
-    double min_distance = std::numeric_limits<double>::max();
-    int predicted_label = -1;
-
-    // Comparar la nueva imagen con todas las imágenes en el dataset
     for (const auto& data : dataset) {
-        double dist = euclidean_distance(new_hu_moments, data.hu_moments);
-        if (dist < min_distance) {
-            min_distance = dist;
-            predicted_label = data.label;
+        double dist = calcEuclideanDist(newImageMoments, data.huMoments);
+        if (dist < minDist) {
+            minDist = dist;
+            label = data.label;
         }
     }
 
-    return predicted_label;
+    return label;
 }
 
+extern "C" {
+    JNIEXPORT jstring JNICALL
+    Java_com_example_imageclassification_MainActivity_recognizeShape(JNIEnv* env, jobject, jobject bitmap, jboolean applyMoment, jstring filePath) {
+        cv::Mat img;
+        convertBitmapToMat(env, bitmap, img, false);
 
+        const char* path = env->GetStringUTFChars(filePath, nullptr);
+        std::vector<MomentData> dataset = loadHuMomentsFromCSV(path);
 
-extern "C"{
+        int label = identifyImage(img, dataset);
 
-    JNIEXPORT jstring JNICALL Java_com_logic_reconocimientodeformas_MainActivity_reconocimiento(JNIEnv * env, jobject /**/, jobject bIn, jboolean momento, jstring file){
-        Mat input;
-        bitmapToMat(env, bIn, input, false);
-
-        //cvtColor(input, input, IMREAD_GRAYSCALE);
-
-        const char* files = env->GetStringUTFChars(file, nullptr);
-
-        std::vector<HuMomentsData> dataset = read_hu_moments_from_csv(files);
-
-        int predicted_label = classify_image(input, dataset);
-
-        string predictedLabel;
-        switch (predicted_label) {
-            case 0: predictedLabel = "Circulo"; break;
-            case 1: predictedLabel = "Cuadrado"; break;
-            case 2: predictedLabel = "Triangulo"; break;
+        std::string result;
+        switch (label) {
+            case 0: result = "Circle"; break;
+            case 1: result = "Square"; break;
+            case 2: result = "Triangle"; break;
+            default: result = "Unknown Shape"; break;
         }
 
-        return env->NewStringUTF(predictedLabel.c_str());
-
+        return env->NewStringUTF(result.c_str());
     }
 }

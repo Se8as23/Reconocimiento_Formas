@@ -19,87 +19,86 @@ import java.util.Random;
 
 public class AreaDibujo extends View {
 
-    float posx = 0, posy = 0;
-    Path path;
-    Paint paint;
-    List<Path> paths;
-    List<Paint> paints;
-    public static AreaDibujo area;
+    private float posX = 0, posY = 0;
+    private Path currentPath;
+    private Paint currentPaint;
+    private List<Path> drawnPaths;
+    private List<Paint> drawnPaints;
+
+    public static AreaDibujo areaInstance;
 
     public AreaDibujo(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
-        paths = new ArrayList<>();
-        paints = new ArrayList<>();
-        area = this;
+        drawnPaths = new ArrayList<>();
+        drawnPaints = new ArrayList<>();
+        areaInstance = this;
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
-        /*Paint paint = new Paint();
-        paint.setStrokeWidth(10);
-        //paint.setARGB(255,255,0,0);
-        //canvas.drawLine(100,100,600,800, paint);
-        paint.setARGB(255,255,255,0);
-        canvas.drawCircle(posx,posy,500,paint);*/
-        int i = 0;
-        for(Path trazo : paths){
-            canvas.drawPath(trazo, paints.get(i++));
+        // Dibujar todos los trazos guardados
+        for (int i = 0; i < drawnPaths.size(); i++) {
+            canvas.drawPath(drawnPaths.get(i), drawnPaints.get(i));
         }
     }
-
-
-
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        posx = event.getX();
-        posy = event.getY();
-        switch (event.getAction()){
+        posX = event.getX();
+        posY = event.getY();
+        
+        switch (event.getAction()) {
             case MotionEvent.ACTION_DOWN:
-                //invalidate();
-                paint = new Paint();
-                paint.setStrokeWidth(15);
-                Random random = new Random();
-                int rojo = random.nextInt(255);
-                int verde = random.nextInt(255);
-                int azul = random.nextInt(255);
-                paint.setARGB(255,95,95,95);
-                paint.setStyle(Paint.Style.STROKE);
-                paints.add(paint);
-                path = new Path();
-                path.moveTo(posx, posy);
-                paths.add(path);
+                // Iniciar un nuevo trazo cuando se presiona la pantalla
+                currentPaint = createRandomPaint();
+                currentPath = new Path();
+                currentPath.moveTo(posX, posY);
+                drawnPaths.add(currentPath);
+                drawnPaints.add(currentPaint);
                 break;
+                
             case MotionEvent.ACTION_MOVE:
             case MotionEvent.ACTION_UP:
-                int puntosHistoricos = event.getHistorySize();
-                for(int i = 0; i < puntosHistoricos; i++){
-                    path.lineTo(event.getHistoricalX(i), event.getHistoricalY(i));
+                // Continuar el trazo a medida que el dedo se mueve
+                int historicalPoints = event.getHistorySize();
+                for (int i = 0; i < historicalPoints; i++) {
+                    currentPath.lineTo(event.getHistoricalX(i), event.getHistoricalY(i));
                 }
-
+                break;
         }
-        invalidate();
+
+        invalidate(); // Redibujar la vista
         return true;
     }
 
-    public Bitmap getBitmap(){
+    private Paint createRandomPaint() {
+        Random random = new Random();
+        int red = random.nextInt(256);
+        int green = random.nextInt(256);
+        int blue = random.nextInt(256);
+
+        Paint paint = new Paint();
+        paint.setStrokeWidth(15);
+        paint.setARGB(255, red, green, blue); // Color aleatorio
+        paint.setStyle(Paint.Style.STROKE);   // Solo contorno
+        return paint;
+    }
+
+    public Bitmap getBitmap() {
+        // Crear un bitmap del área de dibujo
         Bitmap bitmap = Bitmap.createBitmap(getWidth(), getHeight(), Bitmap.Config.ARGB_8888);
-
         Canvas canvas = new Canvas(bitmap);
-
-        canvas.drawColor(Color.WHITE);
-
-        draw(canvas);
-
+        canvas.drawColor(Color.WHITE);  // Fondo blanco
+        draw(canvas);                   // Dibujar los trazos en el canvas
         return bitmap;
     }
 
-
-    public void clean(){
-        paths.clear();
-        paints.clear();
+    public void clean() {
+        // Limpiar los trazos y redibujar
+        drawnPaths.clear();
+        drawnPaints.clear();
         invalidate();
     }
 }
